@@ -733,7 +733,7 @@
     if (btn) { btn.disabled = false; btn.textContent = label; }
     if (!loc) return null;
     if (dist > MAX_DIST) {
-      toast(MAX_DIST + 'm 안에 있어야 차지할 수 있어요 (현재 약 ' + metersText(dist) + ' 거리)');
+      toast(MAX_DIST + 'm 안에 있어야 차지할 수 있어요 (현재 약 ' + Math.round(dist) + 'm 거리)');
       return null;
     }
     return { dist: dist };
@@ -741,12 +741,14 @@
 
   /* ─────────── 인증 모달 ─────────── */
   async function openClaim(key) {
-    if (requireLogin('이 자리를 내 땅으로 만들려면 Google 로그인이 필요해요.')) return;
     if (claimBusy) return;
     claimBusy = true;
+    // 1) 물리적 제한 먼저: 내 GPS 반경 안인지
     const gate = await gateClaim(key);
     claimBusy = false;
     if (!gate) return; // 위치 거부·실패 또는 반경 밖 → 토스트로 이미 안내됨
+    // 2) 그다음 계정: 땅에 이름을 남기려면 Google 로그인
+    if (requireLogin('이 자리를 내 땅으로 만들려면 Google 로그인이 필요해요.')) return;
     const t = state.turfs.get(key);
     state.pendingKey = key;
     state.pendingPhoto = '';
