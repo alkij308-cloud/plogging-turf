@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#0E1F19">
+<title>줍깅 땅따먹기 · 주운 자리가 내 땅</title>
+<meta name="description" content="쓰레기를 줍고 사진으로 인증하면 그 자리가 내 땅이 되는 실시간 지도 게임. 남의 땅은 뺏고, 내 땅은 지켜라.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230E1F19'/%3E%3Cpath d='M25 7c0 10-5.6 15.2-12.6 15.2-1.7 0-3.2-.4-3.2-.4S9.4 14.3 14.2 10.6C17.8 7.8 25 7 25 7Z' fill='%2312B886'/%3E%3Cpath d='M7 26c2-4.7 5-7.8 9.2-10' stroke='%23D8F5EA' stroke-width='1.8' stroke-linecap='round' fill='none'/%3E%3C/svg%3E">
+<link rel="preload" href="assets/fonts/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="map" role="application" aria-label="줍깅 땅따먹기 지도"></div>
+
+<!-- 상단 바 -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M20.5 3.5c0 9-5.2 13.6-11.6 13.6-1.5 0-2.9-.4-2.9-.4s.1-6.8 4.6-10.3C13.9 3.8 20.5 3.5 20.5 3.5Z" fill="currentColor"/><path d="M4 20.4c1.8-4.4 4.7-7.3 8.7-9.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>
+    </span>
+    <div class="brand-text">
+      <h1>줍깅 땅따먹기</h1>
+      <p class="mode-line" id="modeLine"><span class="mode-dot"></span><span id="modeText">로컬 미리보기 모드 · DB 연결 전</span></p>
+    </div>
+  </div>
+  <button class="me-chip" id="nickBtn" type="button" aria-label="내 닉네임 바꾸기">
+    <span class="me-dot" aria-hidden="true"></span>
+    <span class="me-name" id="nickLabel">닉네임</span>
+    <span class="me-count" id="myCountTop">0</span>
+  </button>
+</header>
+
+<!-- 범례 -->
+<div class="legend" aria-hidden="true">
+  <span class="lg"><i class="lg-swatch sw-mine"></i>내 땅</span>
+  <span class="lg"><i class="lg-swatch sw-other"></i>다른 땅</span>
+  <span class="lg"><i class="lg-swatch sw-empty"></i>빈 땅</span>
+</div>
+
+<!-- 안내 토스트 (지도 위) -->
+<div class="hint" id="hint" hidden>지도를 눌러 땅을 골라보세요</div>
+
+<!-- 내 위치 버튼 -->
+<button class="fab" id="locateBtn" type="button" aria-label="내 위치로 이동" title="내 위치로">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6v2.6M12 18.8v2.6M2.6 12h2.6M18.8 12h2.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="12" cy="12" r="7" stroke="currentColor" stroke-width="1.4" fill="none" opacity=".45"/></svg>
+</button>
+
+<!-- 하단 독 -->
+<section class="dock" id="dock" aria-label="내 현황과 랭킹">
+  <div class="dock-grip" aria-hidden="true"></div>
+  <div class="dock-top">
+    <div class="dock-stat">
+      <span class="dock-label">내 땅</span>
+      <p><strong id="myCount">0</strong><span class="unit">칸</span></p>
+    </div>
+    <div class="dock-divider" aria-hidden="true"></div>
+    <div class="dock-stat">
+      <span class="dock-label">순위</span>
+      <p><strong id="myRank">–</strong><span class="unit">위</span></p>
+    </div>
+    <button class="cta-mini" id="quickClaim" type="button">
+      <span aria-hidden="true">📷</span> 줍깅 인증
+    </button>
+  </div>
+
+  <nav class="tabs" role="tablist" aria-label="보기 전환">
+    <button class="tab is-on" data-tab="map" role="tab" aria-selected="true" type="button">지도</button>
+    <button class="tab" data-tab="rank" role="tab" aria-selected="false" type="button">랭킹</button>
+    <button class="tab" data-tab="feed" role="tab" aria-selected="false" type="button">피드</button>
+  </nav>
+
+  <div class="dock-panel" id="dockPanel" hidden></div>
+  <p class="dock-hint" id="dockHint">지도를 눌러 땅을 고르거나, <b>내 위치로</b> 가보세요.</p>
+</section>
+
+<!-- 땅 상세 바텀시트 -->
+<div class="scrim" id="sheetScrim" hidden></div>
+<section class="sheet" id="cellSheet" role="dialog" aria-modal="true" aria-label="땅 정보" hidden>
+  <div class="sheet-grip" id="sheetGrip" aria-hidden="true"></div>
+  <div class="sheet-body" id="cellSheetBody"></div>
+</section>
+
+<!-- 인증 모달 -->
+<div class="modal-wrap" id="claimModal" hidden>
+  <div class="modal-backdrop" data-close="claim"></div>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="claimTitle">
+    <button class="modal-x" type="button" data-close="claim" aria-label="닫기">✕</button>
+    <p class="modal-kicker" id="claimKicker">빈 땅 점령</p>
+    <h2 class="modal-title" id="claimTitle">이 땅, 내 걸로 만들기</h2>
+    <p class="modal-sub" id="claimSub">주운 쓰레기를 한 장 찍으면 인증 끝.</p>
+
+    <p class="claim-target" id="claimTarget"></p>
+
+    <label class="photo-drop" id="photoDrop">
+      <input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
+      <span class="photo-empty" id="photoEmpty">
+        <span class="photo-emoji" aria-hidden="true">📷</span>
+        <strong>인증 사진 찍기</strong>
+        <em>카메라 또는 앨범에서 선택</em>
+      </span>
+      <img id="photoPreview" alt="인증 사진 미리보기" hidden>
+      <span class="photo-retake" id="photoRetake" hidden>다시 찍기</span>
+    </label>
+
+    <label class="field">
+      <span class="field-label">한 줄 메모 <em>선택</em></span>
+      <input id="memoInput" type="text" maxlength="40" autocomplete="off" placeholder="예) 공원 입구 담배꽁초 20개 주웠다">
+      <span class="counter"><span id="memoCount">0</span>/40</span>
+    </label>
+
+    <button class="btn-primary" id="claimSubmit" type="button" disabled>사진을 넣으면 인증할 수 있어요</button>
+    <p class="fineprint">사진은 이 기기에서 720px로 줄여 저장돼요. 위치는 지도 표시에만 써요.</p>
+  </div>
+</div>
+
+<!-- 닉네임 모달 -->
+<div class="modal-wrap" id="nickModal" hidden>
+  <div class="modal-backdrop" data-close="nick"></div>
+  <div class="modal-card modal-nick" role="dialog" aria-modal="true" aria-labelledby="nickTitle">
+    <p class="modal-kicker">시작하기 전에</p>
+    <h2 class="modal-title" id="nickTitle">땅에 새길 이름</h2>
+    <p class="modal-sub">지도에 이 이름이 뜬다. 뺏고 뺏기니 멋있게 지어보자.</p>
+    <label class="field field-nick">
+      <span class="field-label">닉네임</span>
+      <input id="nickInput" type="text" maxlength="12" autocomplete="off" placeholder="예) 쓰레기수거왕">
+      <button class="dice" id="diceBtn" type="button" aria-label="닉네임 추천">🎲</button>
+    </label>
+    <button class="btn-primary" id="nickSave" type="button">이 이름으로 시작하기</button>
+    <p class="fineprint">닉네임은 이 기기에만 저장되고, 언제든 바꿀 수 있어요.</p>
+  </div>
+</div>
+
+<!-- 점령 결과 연출 -->
+<div class="burst" id="burst" hidden aria-live="polite">
+  <div class="burst-card">
+    <span class="burst-emoji" id="burstEmoji">🔥</span>
+    <strong id="burstTitle">땅을 뺏었습니다!</strong>
+    <p id="burstSub"></p>
+  </div>
+</div>
+
+<!-- 토스트 -->
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
