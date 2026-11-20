@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://alkij308-cloud.github.io/plogging-turf/sitemap.xml
