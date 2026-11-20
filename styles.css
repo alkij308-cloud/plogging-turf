@@ -108,6 +108,9 @@ img { display: block; max-width: 100%; }
   100% { transform: scale(1.25); opacity: 0; }
 }
 
+/* 점령 가능 반경(내 GPS 150m) 점선 원 */
+.range-circle { pointer-events: none; }
+
 /* ─────────── 상단 바 ─────────── */
 .topbar {
   position: fixed;
@@ -675,6 +678,8 @@ body.dock-open .dock-hint { display: none; }
   letter-spacing: -.2px;
 }
 .meta-chip.hot { background: #FFF1EE; color: #D24A35; }
+.meta-chip.near { background: #E7F2FF; color: #1B64A8; }
+.meta-chip.far { background: #FFF1EE; color: #D24A35; }
 
 .claim-photo {
   position: relative;

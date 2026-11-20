@@ -10,13 +10,18 @@
     GRID_DEG: 0.001,              // 약 111m × 88m (한국 위도 기준)
     DEFAULT_CENTER: [37.2657, 127.0001], // GPS 거부 시 기본 위치(수원역)
     DEFAULT_ZOOM: 17,
-    POLL_MS: 8000
+    POLL_MS: 8000,
+    MAX_CLAIM_DIST_M: 150         // 내 GPS 반경: 이 거리 안의 칸만 점령·뺏기·방어 가능
   }, window.PLOGGING_CONFIG || {});
 
   const LIVE = Boolean(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY);
   // Supabase가 연결된 라이브 모드에서는 Google 로그인을 켠다. (로컬 미리보기 모드는 닉네임만)
   const AUTH = LIVE && !/^(0|false|no)$/i.test(String(CFG.AUTH || 'on'));
   const GRID = Number(CFG.GRID_DEG) || 0.001;
+  const MAX_DIST = Math.max(1, Number(CFG.MAX_CLAIM_DIST_M) || 150);
+  // 위치를 이만큼 오래 들고 있었으면 새로 받아온다(걸어서 이동한 경우 대비)
+  const LOC_MAX_AGE_MS = 60000;
+  const GEO_BLOCK_MSG = '현재 위치를 확인해야 땅을 차지할 수 있어요 (GPS 권한을 허용해 주세요)';
   const NICK_KEY = 'jubgging.turf.nick.v1';
   const DATA_KEY = 'jubgging.turf.data.v1';
   const MY_COLOR = '#12B886';
@@ -37,10 +42,13 @@
     pendingKey: null,
     pendingPhoto: '',
     myLoc: null,
+    myLocAt: 0,
     tab: 'map'
   };
 
-  let map, gridLayer, turfLayer, selectLayer, meMarker, pollTimer, sb = null;
+  let map, gridLayer, turfLayer, selectLayer, rangeLayer, rangeCircle, meMarker, pollTimer, sb = null;
+  let geoPending = null;
+  let claimBusy = false;
 
   /* ─────────── 격자 유틸 ─────────── */
   function keyOf(lat, lng) {
@@ -69,6 +77,28 @@
   }
   function coordText(cell) {
     return cell.lat.toFixed(4) + '°N  ' + cell.lng.toFixed(4) + '°E';
+  }
+
+  /* 두 위경도 좌표 사이 거리(m) — Haversine */
+  function distanceM(lat1, lng1, lat2, lng2) {
+    const R = 6371000; // 지구 반지름(m)
+    const toRad = Math.PI / 180;
+    const dLat = (lat2 - lat1) * toRad;
+    const dLng = (lng2 - lng1) * toRad;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function metersText(m) {
+    const v = Math.round(m);
+    return v >= 1000 ? (v / 1000).toFixed(1).replace(/\.0$/, '') + 'km' : v + 'm';
+  }
+
+  function cellDistance(key) {
+    if (!state.myLoc) return null;
+    const cell = cellFromKey(key);
+    return distanceM(state.myLoc.lat, state.myLoc.lng, cell.lat, cell.lng);
   }
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -312,6 +342,7 @@
 
     gridLayer = L.layerGroup().addTo(map);
     turfLayer = L.layerGroup().addTo(map);
+    rangeLayer = L.layerGroup().addTo(map); // 내 점령 가능 반경(150m 점선 원)
     selectLayer = L.layerGroup().addTo(map);
 
     // 하단 독에 가리지 않도록 지도 내용을 살짝 위로
@@ -336,6 +367,7 @@
 
   function setMe(lat, lng) {
     state.myLoc = { lat: lat, lng: lng };
+    state.myLocAt = Date.now();
     if (meMarker) map.removeLayer(meMarker);
     const icon = L.divIcon({
       className: 'me-marker',
@@ -344,6 +376,28 @@
       iconAnchor: [8, 8]
     });
     meMarker = L.marker([lat, lng], { icon: icon, interactive: false }).addTo(map);
+    drawRange(lat, lng);
+    updateRangeChip();
+  }
+
+  /* 내 GPS 반경 = 점령 가능 범위. 점선 원으로 그려 한눈에 보이게 한다. */
+  function drawRange(lat, lng) {
+    if (!map || !rangeLayer) return;
+    if (!rangeCircle) {
+      rangeCircle = L.circle([lat, lng], {
+        radius: MAX_DIST,
+        color: '#1D7BFF',
+        weight: 2,
+        opacity: 0.9,
+        dashArray: '7 8',
+        fillColor: '#1D7BFF',
+        fillOpacity: 0.06,
+        interactive: false,
+        className: 'range-circle'
+      }).addTo(rangeLayer);
+      return;
+    }
+    rangeCircle.setLatLng([lat, lng]);
   }
 
   function renderTurfs() {
@@ -562,7 +616,7 @@
         '<p class="sheet-kicker"><span class="dot"></span>빈 땅</p>' +
         '<h2 class="sheet-title">아직 주인 없는 땅</h2>' +
         '<p class="sheet-sub">여기서 쓰레기를 한 줌 주우면<br>바로 내 땅이 돼요.</p>' +
-        '<div class="sheet-meta"><span class="meta-chip">약 100m × 100m</span><span class="meta-chip">점령 가능</span></div>' +
+        '<div class="sheet-meta"><span class="meta-chip">약 100m × 100m</span><span class="meta-chip">점령 가능</span>' + rangeChipHtml(key) + '</div>' +
         '<div class="coord">' + coordText(cell) + '</div>' +
         '<button class="btn-primary" type="button" data-act="claim">이 땅 점령하기</button>';
     } else if (isMine(t)) {
@@ -570,6 +624,7 @@
         '<p class="sheet-kicker"><span class="dot" style="background:' + MY_COLOR + '"></span>내 땅</p>' +
         '<h2 class="sheet-title">내가 지키는 땅</h2>' +
         '<p class="sheet-sub">' + timeAgo(t.claimedAt) + ' 점령 · ' + (t.count || 1) + '번 인증</p>' +
+        '<div class="sheet-meta">' + rangeChipHtml(key) + '</div>' +
         (t.photo ? '<figure class="claim-photo"><img src="' + esc(t.photo) + '" alt="내 인증 사진"><figcaption>' + timeAgo(t.claimedAt) + ' 인증</figcaption></figure>' : '') +
         (t.memo ? '<blockquote class="claim-memo">“' + esc(t.memo) + '”</blockquote>' : '') +
         '<div class="sheet-actions"><button class="btn-primary" type="button" data-act="claim">한 번 더 인증하기</button></div>' +
@@ -581,7 +636,7 @@
         '<p class="sheet-sub">' + timeAgo(t.claimedAt) + ' 점령 · ' + (t.count || 1) + '번 인증</p>' +
         '<div class="sheet-meta">' +
         (t.prevOwner ? '<span class="meta-chip hot">' + esc(t.prevOwner) + ' 님에게서 뺏음</span>' : '') +
-        '<span class="meta-chip">여기서 인증하면 내 땅</span></div>' +
+        '<span class="meta-chip">여기서 인증하면 내 땅</span>' + rangeChipHtml(key) + '</div>' +
         (t.photo ? '<figure class="claim-photo"><img src="' + esc(t.photo) + '" alt="' + esc(t.owner) + ' 님의 인증 사진"><figcaption>' + timeAgo(t.claimedAt) + ' 인증</figcaption></figure>' : '') +
         (t.memo ? '<blockquote class="claim-memo">“' + esc(t.memo) + '”</blockquote>' : '') +
         '<div class="coord">' + coordText(cell) + '</div>' +
@@ -614,9 +669,84 @@
     setTimeout(function () { sheet.hidden = true; }, 280);
   }
 
+  /* ─────────── 위치 · 점령 가능 반경 ─────────── */
+  // 내 위치에서 이 칸까지 거리 안내 문구 (바텀시트·모달용)
+  function rangeChipState(key) {
+    const d = cellDistance(key);
+    if (d == null) return { cls: '', text: '📍 내 위치를 확인하면 거리 안내' };
+    if (d <= MAX_DIST) return { cls: 'near', text: '📍 내 위치에서 ' + metersText(d) + ' · 점령 가능' };
+    return { cls: 'far', text: '📍 내 위치에서 ' + metersText(d) + ' · ' + MAX_DIST + 'm 밖' };
+  }
+
+  function rangeChipHtml(key) {
+    const s = rangeChipState(key);
+    return '<span class="meta-chip ' + s.cls + '" id="rangeChip">' + s.text + '</span>';
+  }
+
+  // 위치를 새로 받거나 바뀔 때 열려 있는 바텀시트의 거리 칩만 고쳐준다
+  function updateRangeChip() {
+    const el = $('#rangeChip');
+    if (!el || !state.selectedKey) return;
+    const s = rangeChipState(state.selectedKey);
+    el.className = 'meta-chip ' + s.cls;
+    el.textContent = s.text;
+  }
+
+  function requestPosition(timeout) {
+    return new Promise(function (resolve, reject) {
+      if (!navigator.geolocation) { reject(new Error('unsupported')); return; }
+      navigator.geolocation.getCurrentPosition(function (pos) {
+        setMe(pos.coords.latitude, pos.coords.longitude);
+        resolve(state.myLoc);
+      }, reject, { enableHighAccuracy: true, timeout: timeout || 8000, maximumAge: 30000 });
+    });
+  }
+
+  // 내 GPS 위치를 확보한다. 최근(LOC_MAX_AGE_MS) 위치가 있으면 그걸 쓰고,
+  // 없으면 GPS를 요청한다. 권한 거부·실패면 토스트로 막고 null을 돌려준다.
+  async function ensureLocation() {
+    if (state.myLoc && Date.now() - state.myLocAt < LOC_MAX_AGE_MS) return state.myLoc;
+    if (!navigator.geolocation) { toast(GEO_BLOCK_MSG); return null; }
+    if (!geoPending) {
+      geoPending = requestPosition()
+        .catch(function () { return null; })
+        .then(function (loc) { geoPending = null; return loc; });
+    }
+    const loc = await geoPending;
+    if (loc) return loc;
+    if (state.myLoc) return state.myLoc; // 예전에라도 받아둔 위치가 있으면 그걸로 판단
+    toast(GEO_BLOCK_MSG);
+    return null;
+  }
+
+  // 점령·뺏기·방어 직전 공통 관문: GPS 확인 → 내 반경(MAX_DIST) 안인지 확인
+  async function gateClaim(key) {
+    const cell = cellFromKey(key);
+    const btn = $('#cellSheetBody [data-act="claim"]');
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '위치 확인 중…'; }
+
+    const loc = await ensureLocation();
+    let dist = null;
+    if (loc) dist = distanceM(loc.lat, loc.lng, cell.lat, cell.lng);
+
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+    if (!loc) return null;
+    if (dist > MAX_DIST) {
+      toast(MAX_DIST + 'm 안에 있어야 차지할 수 있어요 (현재 약 ' + metersText(dist) + ' 거리)');
+      return null;
+    }
+    return { dist: dist };
+  }
+
   /* ─────────── 인증 모달 ─────────── */
-  function openClaim(key) {
+  async function openClaim(key) {
     if (requireLogin('이 자리를 내 땅으로 만들려면 Google 로그인이 필요해요.')) return;
+    if (claimBusy) return;
+    claimBusy = true;
+    const gate = await gateClaim(key);
+    claimBusy = false;
+    if (!gate) return; // 위치 거부·실패 또는 반경 밖 → 토스트로 이미 안내됨
     const t = state.turfs.get(key);
     state.pendingKey = key;
     state.pendingPhoto = '';
@@ -628,7 +758,8 @@
       ? '주운 쓰레기를 한 장 찍으면 인증 끝.'
       : isMine(t) ? '사진을 새로 올리면 점령 시간이 갱신돼요.'
         : '이 자리에서 줍깅 인증을 하면 땅이 내 것으로 넘어와요.';
-    $('#claimTarget').textContent = coordText(cell) + ' · 약 100m 칸';
+    $('#claimTarget').textContent = coordText(cell) + ' · 약 100m 칸' +
+      (gate.dist != null ? ' · 지금 ' + metersText(gate.dist) + ' 거리' : '');
     $('#memoInput').value = '';
     $('#memoCount').textContent = '0';
     resetPhotoUI();
@@ -756,10 +887,21 @@
       return;
     }
     const btn = $('#claimSubmit');
-    const cell = cellFromKey(state.pendingKey);
     const key = state.pendingKey;
-    btn.disabled = true;
+    const cell = cellFromKey(key);
     const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '위치 확인 중…';
+
+    // 저장 직전 한 번 더: 그새 이동했거나 위치가 없을 수 있다
+    const gate = await gateClaim(key);
+    if (!gate || state.pendingKey !== key) {
+      if (state.pendingKey === key) {
+        btn.disabled = false;
+        btn.textContent = label;
+      }
+      return;
+    }
     btn.textContent = '인증하는 중…';
 
     try {
@@ -815,18 +957,15 @@
       return;
     }
     btn.classList.add('is-busy');
-    navigator.geolocation.getCurrentPosition(function (pos) {
+    requestPosition().then(function (loc) {
       btn.classList.remove('is-busy');
-      const lat = pos.coords.latitude;
-      const lng = pos.coords.longitude;
-      setMe(lat, lng);
-      map.flyTo([lat, lng], 17, { duration: .8 });
-      toast('현재 위치로 왔어요. 땅을 눌러보세요');
-    }, function () {
+      map.flyTo([loc.lat, loc.lng], 17, { duration: .8 });
+      toast('현재 위치로 왔어요 · 파란 점선 원(' + MAX_DIST + 'm) 안에서만 땅을 차지할 수 있어요');
+    }).catch(function () {
       btn.classList.remove('is-busy');
       map.flyTo(CFG.DEFAULT_CENTER, CFG.DEFAULT_ZOOM, { duration: .7 });
-      if (showFallback) toast('위치 권한이 없어 기본 위치(수원역)로 왔어요. 지도를 눌러 땅을 고를 수 있어요.');
-    }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
+      if (showFallback) toast('위치 권한이 없어 기본 위치(수원역)로 왔어요. 위치를 허용해야 땅을 차지할 수 있어요.');
+    });
   }
 
   /* ─────────── Google 로그인 (Supabase Auth) ─────────── */
@@ -1065,11 +1204,13 @@
       btn.addEventListener('click', function () { setTab(btn.getAttribute('data-tab')); });
     });
 
-    $('#quickClaim').addEventListener('click', function () {
+    $('#quickClaim').addEventListener('click', async function () {
       if (requireLogin('인증을 올리려면 Google 로그인이 필요해요.')) return;
       if (!state.nick) { openNick(); return; }
-      const center = state.myLoc || map.getCenter();
-      openClaim(keyOf(center.lat, center.lng));
+      // 내 GPS 위치의 칸을 바로 집는다 — 위치가 없으면 먼저 받아온다
+      const loc = await ensureLocation();
+      if (!loc) return;
+      openClaim(keyOf(loc.lat, loc.lng));
     });
 
     $('#sheetScrim').addEventListener('click', closeSheet);
