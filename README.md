@@ -59,6 +59,26 @@ plogging-turf/
 4. 새로고침하면 상단 배지가 **실시간 연결됨 · 같이 뺏고 뺏기**로 바뀐다.
    친구에게 같은 주소를 보내면 같은 지도에서 서로 땅을 뺏는다.
 
+### Google 로그인 (Supabase Auth)
+
+라이브 모드(`SUPABASE_URL`/`SUPABASE_ANON_KEY`가 채워진 상태)에서는 **Google 계정으로 로그인**해야
+땅을 점령·뺏기·방어할 수 있다. 지도·랭킹·피드 구경은 로그인 없이도 된다.
+
+1. **Google Cloud Console** → 새 프로젝트(예: `plogging-turf`) → *Google 인증 플랫폼*에서
+   브랜딩(앱 이름 `줍깅 땅따먹기`, 사용자 지원 이메일)을 만들고 **외부(External)** 로 설정
+2. **OAuth 클라이언트 ID → 웹 애플리케이션**
+   - 승인된 JavaScript 원본: `https://<아이디>.github.io`, `https://<프로젝트>.supabase.co`
+   - 승인된 리디렉션 URI: `https://<프로젝트>.supabase.co/auth/v1/callback`
+3. **Supabase → Authentication → Sign In / Providers → Google**: 사용 설정 후 Client ID / Client Secret 입력
+4. **Supabase → Authentication → URL Configuration**
+   - Site URL: `https://<아이디>.github.io/plogging-turf/`
+   - Redirect URLs: `https://<아이디>.github.io/plogging-turf/**`
+5. 앱 코드는 `supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname } })`로
+   로그인하고, Google 이름을 기본 닉네임으로 쓴다(바꿀 수 있고, 계정별로 이 기기에 저장).
+
+> 로그인을 잠시 끄고 싶으면 `config.js`에 `AUTH: 'off'`를 넣으면 닉네임만 쓰는 옛 방식으로 돌아간다.
+> 개인정보 안내: [privacy.html](privacy.html)
+
 > Realtime 구독이 막힌 환경(사내망·일부 브라우저)이면 자동으로 8초 폴링으로 내려간다.
 > `config.js`의 `POLL_MS`로 조절할 수 있다.
 
@@ -111,7 +131,7 @@ GitHub 저장소 → **Settings → Pages → Source: Deploy from a branch → m
 
 ## 7. 지금 MVP의 한계 (다음 단계 후보)
 
-- 로그인이 없어서 **닉네임을 바꿔가며 땅을 가로챌 수 있다** → Supabase Auth(익명 로그인) 붙이면 해결
+- 로그인은 붙었지만 **RLS 정책이 아직 공개 쓰기**다 → 로그인 사용자만 쓰도록 `auth.uid()` 기반으로 조일 수 있다
 - 위치 위조(개발자 도구)로 멀리서도 점령 가능 → 인증 시 `geolocation` 좌표를 서버에서 검증하는 Edge Function 필요
 - 사진을 DB에 data URL로 저장(칸당 60~90KB) → 사용자가 늘면 Storage 버킷으로 옮기는 게 좋다
 - 땅 유지 기간(예: 7일 지나면 빈 땅으로) 규칙은 아직 없음 → `claimed_at` 기준 크론으로 정리 가능

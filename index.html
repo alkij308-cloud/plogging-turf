@@ -27,11 +27,17 @@
       <p class="mode-line" id="modeLine"><span class="mode-dot"></span><span id="modeText">로컬 미리보기 모드 · DB 연결 전</span></p>
     </div>
   </div>
-  <button class="me-chip" id="nickBtn" type="button" aria-label="내 닉네임 바꾸기">
-    <span class="me-dot" aria-hidden="true"></span>
-    <span class="me-name" id="nickLabel">닉네임</span>
-    <span class="me-count" id="myCountTop">0</span>
-  </button>
+  <div class="auth-slot">
+    <button class="login-btn" id="loginBtn" type="button" hidden>
+      <span class="g-mark" aria-hidden="true">G</span>
+      <span class="login-txt">Google로 로그인</span>
+    </button>
+    <button class="me-chip" id="nickBtn" type="button" aria-label="내 프로필 · 닉네임 바꾸기">
+      <span class="me-dot" aria-hidden="true"></span>
+      <span class="me-name" id="nickLabel">게스트</span>
+      <span class="me-count" id="myCountTop">0</span>
+    </button>
+  </div>
 </header>
 
 <!-- 범례 -->
@@ -117,20 +123,40 @@
   </div>
 </div>
 
-<!-- 닉네임 모달 -->
+<!-- 로그인 유도 모달 -->
+<div class="modal-wrap" id="loginModal" hidden>
+  <div class="modal-backdrop" data-close="login"></div>
+  <div class="modal-card modal-login" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+    <button class="modal-x" type="button" data-close="login" aria-label="닫기">✕</button>
+    <p class="modal-kicker">땅을 차지하려면</p>
+    <h2 class="modal-title" id="loginTitle">Google로 3초 로그인</h2>
+    <p class="modal-sub" id="loginSub">주운 자리를 내 땅으로 남기려면 이름이 필요해요.<br>Google 계정으로 시작하면 끝.</p>
+    <button class="btn-google" id="loginModalBtn" type="button">
+      <span class="g-mark" aria-hidden="true">G</span>
+      Google로 로그인
+    </button>
+    <p class="fineprint">이름과 이메일만 받아 땅 주인 표시에 써요. 비밀번호는 저희가 몰라요.
+      <a href="privacy.html" target="_blank" rel="noopener">개인정보 안내</a></p>
+    <button class="btn-link" type="button" data-close="login">구경만 할게요</button>
+  </div>
+</div>
+
+<!-- 내 프로필(닉네임 · 계정) 모달 -->
 <div class="modal-wrap" id="nickModal" hidden>
   <div class="modal-backdrop" data-close="nick"></div>
   <div class="modal-card modal-nick" role="dialog" aria-modal="true" aria-labelledby="nickTitle">
-    <p class="modal-kicker">시작하기 전에</p>
+    <p class="modal-kicker" id="nickKicker">시작하기 전에</p>
     <h2 class="modal-title" id="nickTitle">땅에 새길 이름</h2>
-    <p class="modal-sub">지도에 이 이름이 뜬다. 뺏고 뺏기니 멋있게 지어보자.</p>
+    <p class="modal-sub" id="nickSub">지도에 이 이름이 뜬다. 뺏고 뺏기니 멋있게 지어보자.</p>
+    <p class="account-line" id="accountLine" hidden></p>
     <label class="field field-nick">
       <span class="field-label">닉네임</span>
       <input id="nickInput" type="text" maxlength="12" autocomplete="off" placeholder="예) 쓰레기수거왕">
       <button class="dice" id="diceBtn" type="button" aria-label="닉네임 추천">🎲</button>
     </label>
     <button class="btn-primary" id="nickSave" type="button">이 이름으로 시작하기</button>
-    <p class="fineprint">닉네임은 이 기기에만 저장되고, 언제든 바꿀 수 있어요.</p>
+    <button class="btn-link" id="logoutBtn" type="button" hidden>로그아웃</button>
+    <p class="fineprint" id="nickFine">닉네임은 이 기기에만 저장되고, 언제든 바꿀 수 있어요.</p>
   </div>
 </div>
 

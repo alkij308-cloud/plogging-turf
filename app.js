@@ -14,6 +14,8 @@
   }, window.PLOGGING_CONFIG || {});
 
   const LIVE = Boolean(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY);
+  // Supabase가 연결된 라이브 모드에서는 Google 로그인을 켠다. (로컬 미리보기 모드는 닉네임만)
+  const AUTH = LIVE && !/^(0|false|no)$/i.test(String(CFG.AUTH || 'on'));
   const GRID = Number(CFG.GRID_DEG) || 0.001;
   const NICK_KEY = 'jubgging.turf.nick.v1';
   const DATA_KEY = 'jubgging.turf.data.v1';
@@ -26,7 +28,9 @@
   const $$ = (sel, root) => Array.prototype.slice.call((root || document).querySelectorAll(sel));
 
   const state = {
-    nick: localStorage.getItem(NICK_KEY) || '',
+    nick: LIVE ? '' : (localStorage.getItem(NICK_KEY) || ''),
+    user: null,
+    authReady: false,
     turfs: new Map(),
     claims: [],
     selectedKey: null,
@@ -36,7 +40,7 @@
     tab: 'map'
   };
 
-  let map, gridLayer, turfLayer, selectLayer, meMarker, pollTimer;
+  let map, gridLayer, turfLayer, selectLayer, meMarker, pollTimer, sb = null;
 
   /* ─────────── 격자 유틸 ─────────── */
   function keyOf(lat, lng) {
@@ -455,7 +459,7 @@
     $('#myCount').textContent = s.tiles > 0 ? s.tiles : '0';
     $('#myCountTop').textContent = s.tiles;
     $('#myRank').textContent = s.rank;
-    $('#nickLabel').textContent = state.nick || '닉네임';
+    updateAuthUI();
   }
 
   /* ─────────── 랭킹 / 피드 패널 ─────────── */
@@ -612,6 +616,7 @@
 
   /* ─────────── 인증 모달 ─────────── */
   function openClaim(key) {
+    if (requireLogin('이 자리를 내 땅으로 만들려면 Google 로그인이 필요해요.')) return;
     const t = state.turfs.get(key);
     state.pendingKey = key;
     state.pendingPhoto = '';
@@ -744,6 +749,12 @@
 
   async function submitClaim() {
     if (!state.pendingPhoto || !state.pendingKey || !state.nick) return;
+    if (AUTH && !state.user) {
+      state.pendingPhoto = '';
+      closeClaim();
+      requireLogin('인증을 올리려면 Google 로그인이 필요해요.');
+      return;
+    }
     const btn = $('#claimSubmit');
     const cell = cellFromKey(state.pendingKey);
     const key = state.pendingKey;
@@ -818,16 +829,195 @@
     }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
   }
 
+  /* ─────────── Google 로그인 (Supabase Auth) ─────────── */
+  const SB_ESM = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+  function nickKeyFor(user) { return user ? NICK_KEY + '.' + user.id : NICK_KEY; }
+
+  function googleName(user) {
+    const m = (user && user.user_metadata) || {};
+    const raw = m.full_name || m.name || (user && user.email ? String(user.email).split('@')[0] : '');
+    return String(raw || '').trim();
+  }
+
+  function cleanNick(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 12);
+  }
+
+  function createClient() {
+    return import(SB_ESM).then(function (mod) {
+      return mod.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+          flowType: 'pkce'
+        }
+      });
+    });
+  }
+
+  async function initAuth() {
+    if (!AUTH) { state.authReady = true; updateAuthUI(); return; }
+
+    // Google 로그인을 취소하거나 실패했을 때 돌아오는 주소 정리
+    const q = new URLSearchParams(location.search);
+    if (q.get('error') || q.get('error_description')) {
+      toast('로그인이 취소됐어요. 다시 시도해 주세요');
+      try { history.replaceState(null, '', location.origin + location.pathname); } catch (e) { /* 무시 */ }
+    }
+
+    try {
+      sb = await createClient();
+      const res = await sb.auth.getSession();
+      applySession(res && res.data ? res.data.session : null);
+      sb.auth.onAuthStateChange(function (event, session) {
+        if (event === 'INITIAL_SESSION') return;
+        applySession(session);
+      });
+      state.authReady = true;
+    } catch (e) {
+      // 라이브러리를 못 불러오면 닉네임만으로 계속 쓸 수 있게 둔다
+      state.authReady = true;
+      state.authError = true;
+    }
+    updateAuthUI();
+  }
+
+  function applySession(session) {
+    const user = session ? session.user : null;
+    const wasUser = state.user;
+    state.user = user || null;
+
+    if (user) {
+      const saved = localStorage.getItem(nickKeyFor(user));
+      const name = cleanNick(saved || googleName(user)) || '줍깅이';
+      state.nick = name;
+      try { localStorage.setItem(nickKeyFor(user), name); } catch (e) { /* 무시 */ }
+    } else {
+      state.nick = LIVE ? '' : (localStorage.getItem(NICK_KEY) || '');
+    }
+
+    updateAuthUI();
+    renderStats();
+    renderPanel();
+
+    if (user && !wasUser) {
+      $('#loginModal').hidden = true;
+      document.body.style.overflow = '';
+      if (LIVE) refreshFromRemote();
+      toast(googleName(user) ? state.nick + ' 님, 로그인 완료' : '로그인 완료 · 땅을 눌러보세요');
+    }
+    if (!user && wasUser) {
+      document.body.style.overflow = '';
+    }
+  }
+
+  function updateAuthUI() {
+    const loginBtn = $('#loginBtn');
+    const chip = $('#nickBtn');
+    if (!loginBtn || !chip) return;
+    const signedIn = Boolean(state.user);
+
+    if (AUTH) {
+      loginBtn.hidden = signedIn;
+      loginBtn.disabled = Boolean(state.authError);
+      const txt = loginBtn.querySelector('.login-txt');
+      if (txt) txt.textContent = state.authError ? '로그인 준비 중' : 'Google로 로그인';
+      chip.hidden = !signedIn;
+    } else {
+      loginBtn.hidden = true;
+      chip.hidden = false;
+    }
+
+    const label = $('#nickLabel');
+    if (label) label.textContent = state.user ? state.nick : (AUTH ? '게스트' : (state.nick || '닉네임'));
+  }
+
+  // 로그인이 필요한 동작 앞에서 호출. 로그인 모달을 띄우고 true를 돌려준다.
+  function requireLogin(message) {
+    if (!AUTH || state.user) return false;
+    const sub = $('#loginSub');
+    if (sub) {
+      sub.innerHTML = message || '주운 자리를 내 땅으로 남기려면 이름이 필요해요.<br>Google 계정으로 시작하면 끝.';
+    }
+    $('#nickModal').hidden = true;
+    $('#claimModal').hidden = true;
+    document.body.style.overflow = '';
+    $('#loginModal').hidden = false;
+    document.body.style.overflow = 'hidden';
+    return true;
+  }
+
+  function closeLogin() {
+    $('#loginModal').hidden = true;
+    document.body.style.overflow = '';
+  }
+
+  async function signIn() {
+    if (!AUTH) { openNick(); return; }
+    if (!sb) { toast('로그인 준비 중이에요. 잠시 후 다시 눌러주세요'); return; }
+    const btn = $('#loginModalBtn');
+    try {
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Google 여는 중…';
+      }
+      const res = await sb.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: location.origin + location.pathname,
+          queryParams: { prompt: 'select_account' }
+        }
+      });
+      if (res && res.error) throw res.error;
+    } catch (e) {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="g-mark" aria-hidden="true">G</span> Google로 로그인';
+      }
+      toast('로그인 화면을 열지 못했어요. 잠시 후 다시 시도해 주세요');
+    }
+  }
+
+  async function signOut() {
+    try { if (sb) await sb.auth.signOut(); } catch (e) { /* 무시 */ }
+    applySession(null);
+    closeLogin();
+    closeNick();
+    toast('로그아웃했어요. 구경은 계속 할 수 있어요');
+  }
+
   /* ─────────── 닉네임 ─────────── */
   function openNick() {
-    $('#nickInput').value = state.nick || '';
+    if (requireLogin('프로필을 만들려면 Google 로그인이 필요해요.')) return;
+
+    const line = $('#accountLine');
+    if (state.user) {
+      line.hidden = false;
+      line.innerHTML = '<b>' + esc(state.nick) + '</b> · ' + esc(state.user.email || 'Google 계정');
+    } else {
+      line.hidden = true;
+      line.textContent = '';
+    }
+    $('#nickKicker').textContent = state.user ? '내 프로필' : '시작하기 전에';
+    $('#nickSub').textContent = state.user
+      ? '지도에 이 이름이 뜬다. 뺏고 뺏기니 멋있게 지어보자.'
+      : '지도에 이 이름이 뜬다. 뺏고 뺏기니 멋있게 지어보자.';
+    $('#nickSave').textContent = state.nick ? '이 이름으로 저장' : '이 이름으로 시작하기';
+    $('#logoutBtn').hidden = !state.user;
+    $('#nickFine').textContent = state.user
+      ? 'Google 계정 이름을 기본으로 썼어요. 바꿔도 내 땅 기록은 그대로 남아요.'
+      : '닉네임은 이 기기에만 저장되고, 언제든 바꿀 수 있어요.';
+
+    $('#nickInput').value = state.nick || (state.user ? googleName(state.user) : '') || '';
     $('#nickModal').hidden = false;
     document.body.style.overflow = 'hidden';
     setTimeout(function () { $('#nickInput').focus(); }, 120);
   }
 
   function closeNick() {
-    if (!state.nick) {
+    if (!state.nick && !state.user && !AUTH) {
       toast('닉네임을 정해야 시작할 수 있어요');
       return;
     }
@@ -836,19 +1026,21 @@
   }
 
   function saveNick() {
-    const value = $('#nickInput').value.trim().replace(/\s+/g, ' ');
+    if (requireLogin('이름을 저장하려면 Google 로그인이 필요해요.')) return;
+
+    const value = cleanNick($('#nickInput').value);
     if (value.length < 2) {
       toast('닉네임은 두 글자 이상으로 정해주세요');
       return;
     }
     const isFirst = !state.nick;
-    state.nick = value.slice(0, 12);
-    localStorage.setItem(NICK_KEY, state.nick);
+    state.nick = value;
+    try { localStorage.setItem(nickKeyFor(state.user), state.nick); } catch (e) { /* 무시 */ }
     closeNick();
     renderStats();
 
     if (isFirst && !state.turfs.size) {
-      seedDemo();
+      if (!LIVE) seedDemo();
     }
     if (!LIVE && !state.turfs.size) {
       seedDemo();
@@ -864,6 +1056,7 @@
     }
   }
 
+
   /* ─────────── 이벤트 연결 ─────────── */
   function bindEvents() {
     $('#locateBtn').addEventListener('click', function () { locate(true); });
@@ -873,6 +1066,7 @@
     });
 
     $('#quickClaim').addEventListener('click', function () {
+      if (requireLogin('인증을 올리려면 Google 로그인이 필요해요.')) return;
       if (!state.nick) { openNick(); return; }
       const center = state.myLoc || map.getCenter();
       openClaim(keyOf(center.lat, center.lng));
@@ -913,6 +1107,12 @@
     });
 
     $('#nickBtn').addEventListener('click', openNick);
+    $('#loginBtn').addEventListener('click', signIn);
+    $('#loginModalBtn').addEventListener('click', signIn);
+    $('#logoutBtn').addEventListener('click', signOut);
+    $$('[data-close="login"]').forEach(function (el) {
+      el.addEventListener('click', closeLogin);
+    });
     $('#nickSave').addEventListener('click', saveNick);
     $('#nickInput').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') saveNick();
@@ -928,8 +1128,9 @@
 
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape') return;
-      if (!$('#claimModal').hidden) closeClaim();
-      else if (!$('#nickModal').hidden && state.nick) closeNick();
+      if (!$('#loginModal').hidden) closeLogin();
+      else if (!$('#claimModal').hidden) closeClaim();
+      else if (!$('#nickModal').hidden && (state.nick || state.user)) closeNick();
       else if (!$('#cellSheet').hidden) closeSheet();
       else if (state.tab !== 'map') closePanel();
     });
@@ -954,9 +1155,8 @@
   async function startRealtime() {
     startPolling();
     try {
-      const mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
-      const client = mod.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
-      client.channel('turf-war')
+      if (!sb) sb = await createClient();
+      sb.channel('turf-war')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'turfs' }, refreshFromRemote)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'claims' }, refreshFromRemote)
         .subscribe();
@@ -978,6 +1178,7 @@
       $('#modeText').textContent = '로컬 미리보기 모드 · DB 연결 전';
     }
 
+    await initAuth();
     try {
       await loadData();
     } catch (e) {
@@ -991,7 +1192,10 @@
 
     if (LIVE) startRealtime();
 
-    if (!state.nick) {
+    if (AUTH) {
+      // 로그인 전에는 구경만. 로그인하면 닉네임이 없을 때만 이름을 물어본다.
+      if (state.user && !state.nick) openNick();
+    } else if (!state.nick) {
       openNick();
     } else if (!state.turfs.size) {
       if (!LIVE) seedDemo();
@@ -1002,6 +1206,12 @@
     // 첫 방문 안내
     setTimeout(function () {
       const hint = $('#hint');
+      if (AUTH && !state.user) {
+        hint.textContent = '지도는 그냥 구경해도 돼요 · 땅을 누르면 로그인';
+        hint.hidden = false;
+        setTimeout(function () { hint.hidden = true; }, 4600);
+        return;
+      }
       if (!state.nick) return;
       hint.hidden = false;
       setTimeout(function () { hint.hidden = true; }, 4200);

@@ -200,6 +200,96 @@ body.is-live .mode-dot { background: var(--mint); box-shadow: 0 0 0 2.5px rgba(1
   font-variant-numeric: tabular-nums;
 }
 
+/* ─────────── 로그인 / 계정 ─────────── */
+.auth-slot { display: flex; align-items: center; gap: 6px; }
+.auth-slot > [hidden] { display: none !important; }
+.login-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px 7px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: var(--shadow-sm);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: -.35px;
+  color: #2C3A33;
+  white-space: nowrap;
+  transition: transform .15s;
+}
+.login-btn:active { transform: scale(.97); }
+.g-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 50%;
+  background: conic-gradient(from -45deg, #EA4335 0 25%, #FBBC05 0 50%, #34A853 0 75%, #4285F4 0);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+.login-txt { max-width: 34vw; overflow: hidden; text-overflow: ellipsis; }
+
+.btn-google {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: #fff;
+  border: 1.4px solid #E3EAE6;
+  box-shadow: var(--shadow-sm);
+  color: #25312B;
+  font-size: 14.5px;
+  font-weight: 800;
+  letter-spacing: -.4px;
+  transition: transform .15s, background .2s;
+}
+.btn-google:active { transform: translateY(1px) scale(.995); background: #F7FAF8; }
+.btn-google[disabled] { opacity: .6; pointer-events: none; }
+.btn-google .g-mark { width: 22px; height: 22px; font-size: 12px; }
+
+.btn-link {
+  width: 100%;
+  margin-top: 8px;
+  padding: 11px;
+  border-radius: 12px;
+  background: transparent;
+  color: #7A8A82;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: -.25px;
+}
+.btn-link:active { background: #F2F5F3; }
+
+.account-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: #F4F8F6;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #4E6357;
+  letter-spacing: -.2px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.account-line[hidden] { display: none; }
+.account-line b { font-weight: 800; color: #22322A; }
+.modal-login .fineprint a { color: var(--mint-deep); text-decoration: underline; }
+
 /* ─────────── 범례 ─────────── */
 .legend {
   position: fixed;
