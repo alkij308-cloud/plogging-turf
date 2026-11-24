@@ -35,6 +35,7 @@
   const state = {
     nick: LIVE ? '' : (localStorage.getItem(NICK_KEY) || ''),
     user: null,
+    session: null,
     authReady: false,
     turfs: new Map(),
     claims: [],
@@ -146,10 +147,13 @@
 
   const SB = {
     base: function () { return String(CFG.SUPABASE_URL).replace(/\/+$/, ''); },
+    // 쓰기(INSERT/UPDATE)는 RLS상 로그인 사용자만 허용되므로,
+    // 로그인 세션이 있으면 그 액세스 토큰으로 요청한다. 없으면 anon(읽기 전용).
     headers: function (extra) {
+      const token = (state.session && state.session.access_token) || CFG.SUPABASE_ANON_KEY;
       return Object.assign({
         apikey: CFG.SUPABASE_ANON_KEY,
-        Authorization: 'Bearer ' + CFG.SUPABASE_ANON_KEY,
+        Authorization: 'Bearer ' + token,
         'Content-Type': 'application/json'
       }, extra || {});
     },
@@ -864,6 +868,13 @@
     };
 
     if (LIVE) {
+      // 토큰이 만료됐을 수 있으니 쓰기 직전에 세션을 한 번 확인한다
+      if (sb) {
+        try {
+          const res = await sb.auth.getSession();
+          if (res && res.data) applySession(res.data.session);
+        } catch (e) { /* 세션 확인 실패는 아래 쓰기에서 처리 */ }
+      }
       await Promise.all([SB.upsertTurf(turf), SB.insertClaim(claim)]);
     }
 
@@ -1029,6 +1040,7 @@
     const user = session ? session.user : null;
     const wasUser = state.user;
     state.user = user || null;
+    state.session = session || null; // REST 쓰기 요청에 쓸 액세스 토큰
 
     if (user) {
       const saved = localStorage.getItem(nickKeyFor(user));

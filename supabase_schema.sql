@@ -45,29 +45,50 @@ create or replace view public.leaderboard as
   order by tiles desc, last_claim asc;
 
 -- ─────────────────────────────────────────────────────────────
--- 4) RLS: 누구나 읽고, 누구나 자기 닉네임으로 쓰는 공개 게임
---    (로그인 없는 MVP · 운영 시 Auth 연동을 권장)
+-- 4) RLS (2026-11-25 적용): 읽기는 누구나, 쓰기는 로그인 사용자만,
+--    삭제는 anon/authenticated 모두 차단(대시보드·service_role만 가능).
+--    앱은 로그인 세션의 액세스 토큰으로 요청한다(app.js SB.headers 참고).
 -- ─────────────────────────────────────────────────────────────
 alter table public.turfs  enable row level security;
 alter table public.claims enable row level security;
 
-drop policy if exists "turfs_public_read"   on public.turfs;
-drop policy if exists "turfs_public_insert" on public.turfs;
-drop policy if exists "turfs_public_update" on public.turfs;
+drop policy if exists "turfs_public_read"    on public.turfs;
+drop policy if exists "turfs_public_insert"  on public.turfs;
+drop policy if exists "turfs_public_update"  on public.turfs;
+drop policy if exists "turfs_read_all"       on public.turfs;
+drop policy if exists "turfs_insert_authed"  on public.turfs;
+drop policy if exists "turfs_update_authed"  on public.turfs;
 
-create policy "turfs_public_read"   on public.turfs for select using (true);
-create policy "turfs_public_insert" on public.turfs for insert with check (true);
-create policy "turfs_public_update" on public.turfs for update using (true) with check (true);
+create policy "turfs_read_all" on public.turfs
+  for select to anon, authenticated using (true);
+
+-- 점령·뺏기·방어: 로그인 사용자면 누구나(남의 칸 덮어쓰기 = 뺏기)
+create policy "turfs_insert_authed" on public.turfs
+  for insert to authenticated with check (true);
+
+create policy "turfs_update_authed" on public.turfs
+  for update to authenticated using (true) with check (true);
 
 drop policy if exists "claims_public_read"   on public.claims;
 drop policy if exists "claims_public_insert" on public.claims;
+drop policy if exists "claims_read_all"      on public.claims;
+drop policy if exists "claims_insert_authed" on public.claims;
 
-create policy "claims_public_read"   on public.claims for select using (true);
-create policy "claims_public_insert" on public.claims for insert with check (true);
+create policy "claims_read_all" on public.claims
+  for select to anon, authenticated using (true);
 
-grant select, insert, update on public.turfs  to anon, authenticated;
-grant select, insert         on public.claims to anon, authenticated;
-grant select on public.leaderboard to anon, authenticated;
+create policy "claims_insert_authed" on public.claims
+  for insert to authenticated with check (true);
+
+-- 삭제 정책은 만들지 않는다 → anon·authenticated는 땅·피드 기록을 지울 수 없다.
+-- (정책이 없으면 삭제 요청은 0행 처리되고 데이터는 그대로 남는다.
+--  더 확실히 막고 싶으면 아래 두 줄의 주석을 풀어 권한까지 회수한다.)
+-- revoke delete on public.turfs from anon, authenticated;
+-- revoke delete, update on public.claims from anon, authenticated;
+
+grant select, insert, update on public.turfs  to authenticated;
+grant select, insert         on public.claims to authenticated;
+grant select on public.turfs, public.claims, public.leaderboard to anon;
 
 -- ─────────────────────────────────────────────────────────────
 -- 5) Realtime: 땅이 바뀌면 접속한 모두의 화면에 즉시 반영
